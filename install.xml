@@ -1,0 +1,392 @@
+<?xml version="1.0" encoding="utf-8"?>
+<modification>
+    <name>Opencart AJAX Search</name>
+    <code>opencart-ajax-search</code>
+    <version>1.0.0</version>
+    <link>an.postoliuk@gmail.com</link>
+    <author>Andrii Postoliuk</author>
+    <file path="catalog/controller/common/footer.php">
+        <operation>
+            <search>
+                <![CDATA[$this->load->language('common/footer');]]>
+            </search>
+            <add position="before"><![CDATA[
+                $this->load->language('module/opencart_ajax_search');
+                $data['opencart_ajax_search_ajax_status'] = $this->config->get('opencart_ajax_search_ajax_status');
+                $data['opencart_ajax_search_min_length'] = $this->config->get('opencart_ajax_search_min_length');
+                $data['text_empty_results'] = $this->language->get('text_empty_results');
+            ]]>
+            </add>
+        </operation>
+    </file>
+    <file path="catalog/view/theme/*/template/common/footer.tpl">
+        <operation>
+            <search>
+                <![CDATA[</footer>]]>
+            </search>
+            <add position="after">
+                <![CDATA[
+            <?php if ($opencart_ajax_search_ajax_status):?>
+	            <link rel="stylesheet" type="text/css" href="catalog/view/theme/default/stylesheet/opencart_ajax_search.css" />
+	            <script>
+                    const opencart_ajax_search = {
+                          selector: '#search input[name=\'search\']',
+                          text_no_matches: '<?php echo $text_empty_results; ?>',
+                          height: '50px'
+                    }
+                    const filterInput = $(opencart_ajax_search.selector);
+                    const opencart_ajax_search_min_length = '<?php echo (int)$opencart_ajax_search_min_length; ?>';
+	            </script>
+
+	            <script  src="catalog/view/javascript/opencart_ajax_search.js"></script>
+			<?php endif;?>
+            ]]>
+            </add>
+        </operation>
+    </file>
+    <file path="catalog/model/catalog/product.php">
+        <operation>
+            <search>
+                <![CDATA[$sort_data = array(]]>
+            </search>
+            <add position="replace">
+                <![CDATA[
+            $sort_data = array(
+            'filter_name',
+            ]]>
+            </add>
+        </operation>
+        <operation>
+            <search>
+                <![CDATA[} elseif ($data['sort'] == 'p.price') {]]>
+            </search>
+            <add position="replace">
+                <![CDATA[
+            } elseif ($data['sort'] == 'filter_name') {
+                $implode_order = array();
+                $i = 1;
+
+                $words = explode(' ', trim(preg_replace('/\s+/', ' ', $data['filter_name'])));
+
+                foreach ($words as $word) {
+                    $implode_order[] = " WHEN pd.name LIKE '" . $this->db->escape($word) . "%' THEN " . $i;
+
+                    $i++;
+                }
+
+                if ($implode_order) {
+                    $sql .= " ORDER BY CASE " . implode(" ", $implode_order) . " ELSE " . $i . " END ";
+                }
+
+            } elseif ($data['sort'] == 'p.price') {
+            ]]>
+            </add>
+        </operation>
+    </file>
+    <file path="catalog/model/catalog/category.php">
+        <operation>
+            <search>
+                <![CDATA[class ModelCatalogCategory extends Model {]]>
+            </search>
+            <add position="after">
+                <![CDATA[
+            public function searchCategories($data = array()) {
+
+                $sql = "SELECT DISTINCT * FROM " . DB_PREFIX . "category c LEFT JOIN " . DB_PREFIX . "category_description cd ON (c.category_id = cd.category_id) LEFT JOIN " . DB_PREFIX . "category_to_store c2s ON (c.category_id = c2s.category_id) WHERE cd.language_id = '" . (int)$this->config->get('config_language_id') . "' AND c2s.store_id = '" . (int)$this->config->get('config_store_id') . "' AND c.status = '1'";
+
+                if (!empty($data['filter_name'])) {
+                    $sql .= " AND (";
+
+                    $implode = array();
+
+                    $words = explode(' ', trim(preg_replace('/\s+/', ' ', $data['filter_name'])));
+
+                    foreach ($words as $word) {
+                        $implode[] = "cd.name LIKE '%" . $this->db->escape($word) . "%'";
+                    }
+
+                    if ($implode) {
+                        $sql .= " " . implode(" AND ", $implode) . " ";
+                    }
+
+                    if (!empty($data['filter_description'])) {
+                        $sql .= " OR cd.description LIKE '%" . $this->db->escape($data['filter_name']) . "%'";
+                    }
+
+                    $sql .= ")";
+                }
+
+                $sql .= " GROUP BY c.category_id";
+
+                $sort_data = array(
+                    'сd.name',
+                    'c.date_added',
+                    'filter_name'
+                );
+
+                if (isset($data['sort']) && in_array($data['sort'], $sort_data)) {
+                    if ($data['sort'] == 'cd.name') {
+                        $sql .= " ORDER BY LCASE(" . $data['sort'] . ")";
+                    } elseif ($data['sort'] == 'filter_name') {
+                        $implode_order = array();
+                        $i = 1;
+
+                        $words = explode(' ', trim(preg_replace('/\s+/', ' ', $data['filter_name'])));
+
+                        foreach ($words as $word) {
+                            $implode_order[] = " WHEN cd.name LIKE '" . $this->db->escape($word) . "%' THEN " . $i;
+
+                            $i++;
+                        }
+
+                        if ($implode_order) {
+                            $sql .= " ORDER BY CASE " . implode(" ", $implode_order) . " ELSE " . $i . " END ";
+                        }
+
+                    } else {
+                        $sql .= " ORDER BY " . $data['sort'];
+                    }
+                } else {
+                    $sql .= " ORDER BY cd.name";
+                }
+
+                if (isset($data['order']) && ($data['order'] == 'DESC')) {
+                    $sql .= " DESC, LCASE(cd.name) DESC";
+                } else {
+                    $sql .= " ASC, LCASE(cd.name) ASC";
+                }
+
+                if (isset($data['start']) || isset($data['limit'])) {
+                    if ($data['start'] < 0) {
+                        $data['start'] = 0;
+                    }
+
+                    if ($data['limit'] < 1) {
+                        $data['limit'] = 20;
+                    }
+
+                    $sql .= " LIMIT " . (int)$data['start'] . "," . (int)$data['limit'];
+                }
+
+                $category_data = array();
+
+                $query = $this->db->query($sql);
+
+                foreach ($query->rows as $result) {
+                    $category_data[] = array(
+                        'category_id'   =>  $result['category_id'],
+                        'name'          =>  $result['name'],
+                        'description'   =>  $result['description'],
+                        'image'         =>  $result['image']
+                    );
+                }
+
+                return $category_data;
+            }
+            ]]>
+            </add>
+        </operation>
+    </file>
+    <file path="catalog/model/catalog/information.php">
+        <operation>
+            <search>
+                <![CDATA[class ModelCatalogInformation extends Model {]]>
+            </search>
+            <add position="after">
+                <![CDATA[
+            public function searchInformation($data = array()) {
+
+                $sql = "SELECT DISTINCT * FROM " . DB_PREFIX . "information i LEFT JOIN " . DB_PREFIX . "information_description id ON (i.information_id = id.information_id) LEFT JOIN " . DB_PREFIX . "information_to_store i2s ON (i.information_id = i2s.information_id) WHERE  id.language_id = '" . (int)$this->config->get('config_language_id') . "' AND i2s.store_id = '" . (int)$this->config->get('config_store_id') . "' AND i.status = '1'";
+
+                if (!empty($data['filter_name'])) {
+                    $sql .= " AND (";
+
+                    $implode = array();
+
+                    $words = explode(' ', trim(preg_replace('/\s+/', ' ', $data['filter_name'])));
+
+                    foreach ($words as $word) {
+                        $implode[] = "id.title LIKE '%" . $this->db->escape($word) . "%'";
+                    }
+
+                    if ($implode) {
+                        $sql .= " " . implode(" AND ", $implode) . " ";
+                    }
+
+                    if (!empty($data['filter_description'])) {
+                        $sql .= " OR id.description LIKE '%" . $this->db->escape($data['filter_name']) . "%'";
+                    }
+
+                    $sql .= ")";
+                }
+
+                $sql .= " GROUP BY i.information_id";
+
+                $sort_data = array(
+                    'id.title',
+                    'i.date_added',
+                    'filter_name'
+                );
+
+                if (isset($data['sort']) && in_array($data['sort'], $sort_data)) {
+                    if ($data['sort'] == 'id.title') {
+                        $sql .= " ORDER BY LCASE(" . $data['sort'] . ")";
+                    } elseif ($data['sort'] == 'filter_name') {
+                        $implode_order = array();
+                        $i = 1;
+
+                        $words = explode(' ', trim(preg_replace('/\s+/', ' ', $data['filter_name'])));
+
+                        foreach ($words as $word) {
+                            $implode_order[] = " WHEN id.title LIKE '" . $this->db->escape($word) . "%' THEN " . $i;
+
+                            $i++;
+                        }
+
+                        if ($implode_order) {
+                            $sql .= " ORDER BY CASE " . implode(" ", $implode_order) . " ELSE " . $i . " END ";
+                        }
+
+                    } else {
+                        $sql .= " ORDER BY " . $data['sort'];
+                    }
+                } else {
+                    $sql .= " ORDER BY id.title";
+                }
+
+                if (isset($data['order']) && ($data['order'] == 'DESC')) {
+                    $sql .= " DESC, LCASE(id.title) DESC";
+                } else {
+                    $sql .= " ASC, LCASE(id.title) ASC";
+                }
+
+                if (isset($data['start']) || isset($data['limit'])) {
+                    if ($data['start'] < 0) {
+                        $data['start'] = 0;
+                    }
+
+                    if ($data['limit'] < 1) {
+                        $data['limit'] = 20;
+                    }
+
+                    $sql .= " LIMIT " . (int)$data['start'] . "," . (int)$data['limit'];
+                }
+
+                $information_data = array();
+
+                $query = $this->db->query($sql);
+
+                foreach ($query->rows as $result) {
+                    $information_data[] = array(
+                        'information_id'   =>  $result['information_id'],
+                        'title'          =>  $result['title'],
+                        'description'   =>  $result['description'],
+                    );
+                }
+
+                return $information_data;
+            }
+            ]]>
+            </add>
+        </operation>
+    </file>
+    <file path="catalog/model/catalog/news.php">
+        <operation>
+            <search>
+                <![CDATA[class ModelCatalogNews extends Model { ]]>
+            </search>
+            <add position="after">
+                <![CDATA[
+        	public function searchNews($data) {
+        		$sql = "SELECT * FROM " . DB_PREFIX . "news n LEFT JOIN " . DB_PREFIX . "news_description nd ON (n.news_id = nd.news_id) LEFT JOIN " . DB_PREFIX . "news_to_store n2s ON (n.news_id = n2s.news_id) WHERE nd.language_id = '" . (int)$this->config->get('config_language_id') . "' AND n2s.store_id = '" . (int)$this->config->get('config_store_id') . "' AND n.status = '1'";
+
+        		if (!empty($data['filter_name'])) {
+        			$sql .= " AND (";
+
+        			$implode = array();
+
+        			$words = explode(' ', trim(preg_replace('/\s+/', ' ', $data['filter_name'])));
+
+        			foreach ($words as $word) {
+        				$implode[] = "nd.title LIKE '%" . $this->db->escape($word) . "%'";
+        			}
+
+        			if ($implode) {
+        				$sql .= " " . implode(" AND ", $implode) . " ";
+        			}
+
+        			if (!empty($data['filter_description'])) {
+        				$sql .= " OR nd.description LIKE '%" . $this->db->escape($data['filter_name']) . "%'";
+        			}
+
+        			$sql .= ")";
+        		}
+
+        		$sql .= " GROUP BY n.news_id";
+
+        		$sort_data = array(
+        			'nd.title',
+        			'n.date_added',
+        			'filter_name'
+        		);
+
+        		if (isset($data['sort']) && in_array($data['sort'], $sort_data)) {
+        			if ($data['sort'] == 'filter_name') {
+        				$implode_order = array();
+        				$i = 1;
+
+        				$words = explode(' ', trim(preg_replace('/\s+/', ' ', $data['filter_name'])));
+
+        				foreach ($words as $word) {
+        					$implode_order[] = " WHEN nd.title LIKE '" . $this->db->escape($word) . "%' THEN " . $i;
+
+        					$i++;
+        				}
+
+        				if ($implode_order) {
+        					$sql .= " ORDER BY CASE " . implode(" ", $implode_order) . " ELSE " . $i . " END ";
+        				}
+        			} else {
+        				$sql .= " ORDER BY " . $data['sort'];
+        			}
+
+        		} else {
+        			$sql .= " ORDER BY nd.title";
+        		}
+
+        		if (isset($data['order']) && ($data['order'] == 'DESC')) {
+        			$sql .= " DESC, LCASE(nd.title) DESC";
+        		} else {
+        			$sql .= " ASC, LCASE(nd.title) DESC";
+        		}
+
+        		if (isset($data['start']) || isset($data['limit'])) {
+        			if ($data['start'] < 0) {
+        				$data['start'] = 0;
+        			}
+        			if ($data['limit'] < 1) {
+        				$data['limit'] = 10;
+        			}
+
+        			$sql .= " LIMIT " . (int)$data['start'] . "," . (int)$data['limit'];
+        		}
+
+        		$news_data = array();
+
+        		$query = $this->db->query($sql);
+
+        		foreach ($query->rows as $result) {
+        			$news_data[] = array(
+        				'news_id'   =>  $result['news_id'],
+        				'title'          =>  $result['title'],
+        				'description'   =>  $result['description'],
+        			);
+        		}
+
+        		return $news_data;
+        	}
+            ]]>
+            </add>
+        </operation>
+    </file>
+</modification>
